@@ -1,0 +1,15 @@
+{
+  "comment": "Provisional CI quality gate; values are finalised from benchmarks/results.json after the first full run.",
+  "checks": [
+    {"path": "offline.movielens_100k.per_user_temporal.models.two_stage.recall@10", "min": 0.10, "optional": true},
+    {"path": "offline.movielens_100k.per_user_temporal.models.itemknn.recall@10", "min": 0.09, "optional": true},
+    {"path": "offline.movielens_100k.per_user_temporal.models.popularity.recall@10", "min": 0.04, "optional": true},
+    {"path": "offline.retail_synthetic.per_user_temporal.models.two_stage.recall@10", "min": 0.20},
+    {"path": "offline.retail_synthetic.per_user_temporal.models.itemknn.recall@10", "min": 0.20},
+    {"path": "offline.retail_synthetic.per_user_temporal.models.popularity.recall@10", "min": 0.05},
+    {"path": "counterfactual.retail_synthetic.policies.two_stage.snips.abs_error", "max": 0.01},
+    {"path": "ab_simulator.retail_synthetic.aa.msprt_reject_rate", "max": 0.08},
+    {"path": "ab_simulator.retail_synthetic.ab.msprt_treatment_better_rate", "min": 0.5},
+    {"path": "serving.models.two_stage.p95_ms", "max": 100.0}
+  ]
+}

@@ -1,0 +1,80 @@
+[project]
+name = "curate"
+version = "0.1.0"
+description = "Recommender platform with offline, counterfactual and sequential A/B evaluation"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = "MIT"
+authors = [{ name = "Raunit Kumar Thakur" }]
+dependencies = [
+    "fastapi>=0.162.0",
+    "numpy>=2.5.4",
+    "prometheus-client>=0.26.0",
+    "pydantic>=2.14.1",
+    "scikit-learn>=1.9.1",
+    "scipy>=1.18.1",
+    "torch>=2.14.1",
+    "uvicorn>=0.54.0",
+]
+
+[project.optional-dependencies]
+llm = [
+    "anthropic>=2.3.0",
+]
+
+[project.scripts]
+curate = "curate.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "hypothesis>=6.170.9",
+    "pytest>=9.1.1",
+    "ruff>=0.17.2",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF", "ANN", "D", "PL", "C4", "PT", "RET", "ARG", "T20"]
+ignore = ["D203", "D213", "D105", "D107", "PLR0913", "PLR2004", "RUF012", "ANN401", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "PLR2004", "ANN", "S101", "PLR0915", "PLC0415"]
+"src/curate/cli.py" = ["T201", "PLC0415"]
+"src/curate/bench.py" = ["T201"]
+"src/curate/explain/llm.py" = ["PLC0415"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pylint]
+max-args = 8
+max-statements = 50
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "network: needs internet access (skipped when the dataset is not cached and the network is unavailable)",
+  "slow: takes more than a few seconds",
+]
+filterwarnings = ["error::DeprecationWarning:curate.*"]

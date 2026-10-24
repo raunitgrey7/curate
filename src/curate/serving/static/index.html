@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>curate</title>
+<style>
+  :root { --bg: #f6f7f9; --card: #ffffff; --ink: #1d2330; --muted: #5b6472; --line: #e1e5ea; --accent: #2f6fed; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11151c; --card: #1a2029; --ink: #e8ecf1; --muted: #9aa5b4; --line: #2a323e; --accent: #6b9bff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.lead { color: var(--muted); margin: 0 0 20px; }
+  form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; align-items: end; margin-bottom: 20px; }
+  label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+  input, select, button { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); }
+  button { background: var(--accent); color: #fff; border-color: transparent; cursor: pointer; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 12px; min-height: 20px; }
+  ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+  li { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; grid-template-columns: 32px 1fr; gap: 10px; }
+  .rank { font-weight: 600; color: var(--muted); }
+  .title { font-weight: 600; }
+  .genres { color: var(--muted); font-size: 13px; }
+  .why { margin-top: 4px; font-size: 14px; }
+  .err { color: #c0392b; }
+</style>
+</head>
+<body>
+<main>
+  <h1>curate</h1>
+  <p class="lead">Recommendations with measured explanations. Every number in an explanation is read from the training data.</p>
+  <form id="f">
+    <label>User id <input id="user" type="number" min="0" value="1" required></label>
+    <label>Model
+      <select id="model">
+        <option value="two_stage">two_stage</option>
+        <option value="two_tower">two_tower</option>
+        <option value="itemknn">itemknn</option>
+        <option value="bpr">bpr</option>
+        <option value="popularity">popularity</option>
+      </select>
+    </label>
+    <label>k <input id="k" type="number" min="1" max="100" value="10"></label>
+    <label>API key (if required) <input id="key" type="password" autocomplete="off"></label>
+    <button type="submit">Recommend</button>
+  </form>
+  <div class="meta" id="meta"></div>
+  <ol id="out"></ol>
+</main>
+<script>
+  const form = document.getElementById("f");
+  const out = document.getElementById("out");
+  const meta = document.getElementById("meta");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    meta.textContent = "loading";
+    out.innerHTML = "";
+    const body = {
+      user_id: Number(document.getElementById("user").value),
+      k: Number(document.getElementById("k").value),
+      model: document.getElementById("model").value,
+    };
+    const headers = { "content-type": "application/json" };
+    const key = document.getElementById("key").value;
+    if (key) headers["x-api-key"] = key;
+    try {
+      const response = await fetch("/v1/recommend", { method: "POST", headers, body: JSON.stringify(body) });
+      const data = await response.json();
+      if (!response.ok) { meta.innerHTML = `<span class="err">${response.status}: ${data.detail}</span>`; return; }
+      const fallback = data.fallback === "none" ? "" : ` (fallback: ${data.fallback})`;
+      meta.textContent = `model ${data.model}${fallback}, model time ${data.model_latency_ms} ms, request ${data.request_id}`;
+      for (const item of data.items) {
+        const li = document.createElement("li");
+        const rank = document.createElement("div"); rank.className = "rank"; rank.textContent = item.rank;
+        const cell = document.createElement("div");
+        const title = document.createElement("div"); title.className = "title"; title.textContent = item.title;
+        const genres = document.createElement("div"); genres.className = "genres"; genres.textContent = item.genres.join(", ") + (item.year ? ` (${item.year})` : "");
+        const why = document.createElement("div"); why.className = "why"; why.textContent = item.explanation ? item.explanation.text : "";
+        cell.append(title, genres, why);
+        li.append(rank, cell);
+        out.append(li);
+      }
+    } catch (err) {
+      meta.innerHTML = `<span class="err">${err}</span>`;
+    }
+  });
+</script>
+</body>
+</html>
