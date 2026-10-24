@@ -216,7 +216,82 @@ exit=0
 ```
 <!-- OUTPUT:END -->
 
-## 5. Known gaps and limitations
+## 5. From-scratch verification
+
+A fresh `git clone` of the repository into an empty directory, followed by the Makefile targets, on 2026-10-25:
+
+```
+=== make setup ===
+uv run python -m curate.cli data --seed 42
+movielens_100k: 100000 interactions, sha256 verified
+retail_synthetic: 77910 interactions (seed 42)
+=== make lint ===
+All checks passed!
+53 files already formatted
+=== make test ===
+126 passed, 1 warning in 33.15s
+=== make check (uses committed results.json) ===
+quality gate: PASS
+```
+
+The one warning was Starlette's deprecation notice about `httpx` in its test client when `httpx2` is absent; the
+main environment had `httpx2` through the optional `anthropic` extra, so `httpx2` was added to the dev group to
+make a fresh `uv sync` identical.
+
+## 6. `make serve` from a fresh login shell
+
+`zsh -lc 'make serve PORT=18080'` loaded the bundle trained by the benchmark's latency block and answered the probes
+below; the server was then stopped with SIGTERM (make reports that as `Error 143`).
+
+```
+GET /health
+{"status":"ok","version":"0.1.0","dataset":"movielens_100k","models":["bpr","itemknn","popularity","two_stage","two_tower"],"n_users":943,"n_items":1682,"uptime_seconds":0.63}
+
+POST /v1/recommend {"user_id": 1, "k": 3}
+two_stage, fallback none, model time 21.43 ms (first request after start; the warm p50 in the benchmark is 3.20 ms)
+  1 Die Hard: With a Vengeance (1995) | Because you watched "Die Hard 2 (1990)": 77% of the people who watched it also watched this one; both are Action, Thriller.
+  2 True Lies (1994) | Because you watched "Jurassic Park (1993)": 66% of the people who watched it also watched this one; both are Action, Adventure.
+  3 Grease (1978) | Because you watched "Sleepless in Seattle (1993)": 58% of the people who watched it also watched this one; both are Comedy, Romance.
+
+GET /metrics (excerpt)
+curate_recommendations_total{model="two_stage"} 1.0
+
+GET /  ->  the static dashboard (<!doctype html> ...)
+```
+
+## 7. Container
+
+<!-- DOCKER:BEGIN -->
+`docker build -t curate:local .` built the three-stage image on 2026-10-25 (builder: `python:3.13-slim-bookworm`
+plus the `uv` 0.13.5 binary; trainer: copies the cached, verified archive and runs `curate data` and `curate train`;
+runtime: non-root user, only the virtualenv and `artifacts/`). `docker image inspect` reports 1576 MB on disk
+(344 MB compressed content); the size is dominated by the CPU torch wheel and its dependencies.
+
+Smoke test of the running container (`docker run -p 18000:8000 curate:local`):
+
+```
+GET /health
+{"status":"ok","version":"0.1.0","dataset":"movielens_100k","models":["bpr","itemknn","popularity","two_stage","two_tower"],"n_users":943,"n_items":1682,"uptime_seconds":0.567}
+
+POST /v1/recommend {"user_id": 1, "k": 3}  (excerpt)
+{"user_id":1,"model":"two_stage","k":3,"fallback":"none","items":[{"item_id":403,"title":"Batman (1989)", ...
+ "explanation":{"kind":"because_you_watched","text":"Because you watched \"Top Gun (1986)\": 70% of the people who watched it also watched this one; both are Action.", ...
+
+docker exec curate-smoke id
+uid=999(curate) gid=999(curate) groups=999(curate)
+
+GET /metrics (excerpt)
+curate_http_requests_total{method="GET",route="/health",status="200"} 2.0
+curate_http_requests_total{method="POST",route="/v1/recommend",status="200"} 1.0
+```
+
+Two build problems were found and fixed on the way: the combined `uv` plus Python base image tag did not exist (the
+builder now copies the `uv` binary into `python:3.13-slim-bookworm`), and the first runtime command passed
+`--log-config /dev/null` to uvicorn, which it rejects as an empty file; the container now starts through
+`python -m curate.cli serve`, the same entry point as `make serve`.
+<!-- DOCKER:END -->
+
+## 8. Known gaps and limitations
 
 * **Scale.** Scoring is a dense pass over the catalogue per user. Fine for thousands of items; a production
   catalogue of millions needs an ANN index for the two-tower embeddings and a sparse path for item-kNN.
@@ -235,6 +310,12 @@ exit=0
   reported for transparency, not as the headline.
 * **Latency was measured over loopback with one uvicorn worker** on a laptop; it includes HTTP, middleware,
   explanations and JSON serialisation but not network distance or multi-worker contention.
-* **Docker image was built and smoke-tested locally; CI has not run** because the repository has not been pushed
-  (the charter forbids pushing).
+* **CI has not run** because the repository has not been pushed (the charter forbids pushing). The workflow was
+  parsed and every step was executed locally in the same order.
+* **The MovieLens download does not verify inside Debian-based images.** `files.grouplens.org` chains to the
+  "emSign Root TLS CA - G3" root (eMudhra), which the `python:3.13-slim-bookworm` CA bundle does not include (PyPI
+  verifies fine from the same container, so this is not a proxy issue; macOS trusts the root, so `make setup` works
+  on the host). The Docker build therefore copies the cached `data/ml-100k.zip` from the build context and only
+  downloads when it is absent; CI restores the archive from the Actions cache before building. The verification of
+  the SHA-256 is unchanged.
 * **No online learning or feedback endpoint**; the bundle is retrained with `curate train`.

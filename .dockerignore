@@ -6,7 +6,7 @@
 __pycache__
 artifacts/*
 !artifacts/.gitkeep
-data/ml-100k
+data/ml-100k/
 benchmarks/results.*
 docs
 *.md

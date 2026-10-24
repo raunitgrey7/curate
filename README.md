@@ -165,6 +165,9 @@ one JSON object per line with the request id. Validation errors return 422 with 
 * The two-stage ranker is a pointwise classifier (no listwise loss) and candidates are capped at 50 per
   retriever.
 * No online learning: the bundle is retrained with `curate train`.
+* `files.grouplens.org` chains to an eMudhra root that Debian's CA bundle does not ship, so the download fails inside
+  `python:3.13-slim` containers. Run `make setup` on the host first; the Docker build copies the verified archive from
+  `data/` and only downloads when it is absent.
 
 ## Roadmap
 

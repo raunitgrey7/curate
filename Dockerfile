@@ -9,10 +9,12 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-editable
 
 # Stage 2: train the serving bundle so the runtime image starts instantly and needs no network.
+# The build context may carry data/ml-100k.zip from a previous `make setup`; `curate data` verifies its SHA-256 and
+# only downloads when the archive is absent, so the build works offline once the archive is cached.
 FROM builder AS trainer
 ARG CURATE_DATASET=movielens_100k
 ENV PATH="/app/.venv/bin:$PATH" CURATE_DATA_DIR=/app/data CURATE_ARTIFACT_DIR=/app/artifacts
-COPY data/CHECKSUMS.sha256 ./data/
+COPY data/ ./data/
 RUN python -m curate.cli data && python -m curate.cli train --dataset ${CURATE_DATASET}
 
 # Stage 3: minimal runtime, non-root user, only the virtualenv and the trained artifacts.
@@ -30,4 +32,4 @@ ENV PATH="/app/.venv/bin:$PATH" \
 USER curate
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD curl -fsS http://127.0.0.1:8000/health || exit 1
-CMD ["uvicorn", "curate.serving.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--log-config", "/dev/null"]
+CMD ["python", "-m", "curate.cli", "serve", "--host", "0.0.0.0", "--port", "8000"]

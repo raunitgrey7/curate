@@ -104,5 +104,7 @@ together.
   capped so results do not depend on the machine's core count.
 * Scale: scoring is a dense pass over the catalogue per user, fine up to tens of thousands of items. Beyond that the
   two-tower item embeddings would go into an ANN index behind the same `score` interface.
-* Container: multi-stage image; the trainer stage downloads and verifies MovieLens and trains the bundle so the runtime
-  stage needs no network and runs as a non-root user.
+* Container: multi-stage image. The trainer stage copies the cached, checksum-verified MovieLens archive from the build
+  context (downloading only when it is absent, which fails in Debian images because the grouplens certificate chain
+  ends at a root Debian does not ship) and trains the bundle, so the runtime stage needs no network and runs as a
+  non-root user.

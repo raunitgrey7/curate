@@ -65,6 +65,11 @@ jobs:
     needs: lint-test-bench
     steps:
       - uses: actions/checkout@v4
+      - name: Restore cached MovieLens archive (the build downloads it when absent)
+        uses: actions/cache@v4
+        with:
+          path: data/ml-100k.zip
+          key: ml-100k-50d2a982c66986937beb9ffb3aa76efe955bf3d5c6b761f4e3a7cd717c6a3229
       - name: Build image
         run: docker build -t curate:ci .
       - name: Smoke test container
