@@ -14,6 +14,7 @@ import platform
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -181,14 +182,13 @@ def _fit_reward_table(feedback: BanditFeedback, shape: tuple[int, int], seen: sp
     return table
 
 
-def ab_block(models: TrainedModels, split: Split, expected_reward: np.ndarray, seed: int) -> dict[str, Any]:
-    """A/A and A/B simulations with mSPRT, naive peeking and a fixed-horizon test."""
-    rng = np.random.default_rng(seed)
-    seen = split.seen_before_test()
-    users = EvaluationTarget.from_split(split).users
-    control = slate_hit_probability(models.retrievers["popularity"], users, seen, 10, expected_reward)
-    treatment = slate_hit_probability(models.two_stage, users, seen, 10, expected_reward)
-    test = MixtureSPRT(alpha=0.05, tau=0.02)
+def _ab_scenario(
+    rng: np.random.Generator,
+    control: np.ndarray,
+    treatment: np.ndarray,
+    test: MixtureSPRT,
+    label: tuple[str, str],
+) -> dict[str, Any]:
     aa = simulate_experiment(
         rng, control, control, n_max=20_000, check_every=100, replications=400, test=test
     )
@@ -196,14 +196,35 @@ def ab_block(models: TrainedModels, split: Split, expected_reward: np.ndarray, s
         rng, control, treatment, n_max=20_000, check_every=100, replications=400, test=test
     )
     return {
-        "control": "popularity top-10",
-        "treatment": "two_stage top-10",
+        "control": f"{label[0]} top-10",
+        "treatment": f"{label[1]} top-10",
         "control_hit_rate": round(float(control.mean()), 6),
         "treatment_hit_rate": round(float(treatment.mean()), 6),
-        "alpha": test.alpha,
-        "tau": test.tau,
         "aa": aa.as_dict(),
         "ab": ab.as_dict(),
+    }
+
+
+def ab_block(models: TrainedModels, split: Split, expected_reward: np.ndarray, seed: int) -> dict[str, Any]:
+    """A/A and A/B simulations for a large lift (popularity vs two-stage) and a small one (two-tower vs two-stage)."""
+    rng = np.random.default_rng(seed)
+    seen = split.seen_before_test()
+    users = EvaluationTarget.from_split(split).users
+    hit = {
+        name: slate_hit_probability(models.all_models()[name], users, seen, 10, expected_reward)
+        for name in ("popularity", "two_tower", "two_stage")
+    }
+    test = MixtureSPRT(alpha=0.05, tau=0.02)
+    return {
+        "alpha": test.alpha,
+        "tau": test.tau,
+        "replications": 400,
+        "n_max": 20_000,
+        "check_every": 100,
+        "large_lift": _ab_scenario(
+            rng, hit["popularity"], hit["two_stage"], test, ("popularity", "two_stage")
+        ),
+        "small_lift": _ab_scenario(rng, hit["two_tower"], hit["two_stage"], test, ("two_tower", "two_stage")),
     }
 
 
@@ -226,7 +247,7 @@ def latency_block(settings: Settings, dataset: Dataset, seed: int) -> dict[str, 
     state = ServingState.from_bundle(
         ServingBundle.load(settings.artifact_dir), FeatureStore(settings.artifact_dir / STORE_FILE), settings
     )
-    app = create_app(settings, state)
+    app = create_app(replace(settings, log_level="WARNING"), state)
     summaries = measure_latency(app, bundle.user_ids, list(MODEL_ORDER), n_requests=200, seed=seed)
     return {
         "dataset": dataset.name,
@@ -330,15 +351,20 @@ def render_markdown(results: dict[str, Any]) -> str:
     lines += [
         "## A/B simulator (alpha 0.05, 400 replications, up to 20000 arrivals, checks every 100)",
         "",
-        "| dataset | control hit rate | treatment hit rate | A/A mSPRT FPR | A/A naive peeking FPR | A/A fixed-horizon FPR | A/B mSPRT power | A/B mean n at decision |",
-        "|---|---|---|---|---|---|---|---|",
+        "| dataset | scenario | control hit rate | treatment hit rate | A/A mSPRT FPR | A/A naive peeking FPR | "
+        "A/A fixed-horizon FPR | A/B mSPRT power | A/B fixed-horizon power | A/B mean n at decision |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for name, block in results["ab_simulator"].items():
-        aa, ab = block["aa"], block["ab"]
-        lines.append(
-            f"| {name} | {block['control_hit_rate']:.4f} | {block['treatment_hit_rate']:.4f} | {aa['msprt_reject_rate']:.4f} | "
-            f"{aa['naive_peeking_reject_rate']:.4f} | {aa['fixed_horizon_reject_rate']:.4f} | {ab['msprt_treatment_better_rate']:.4f} | {ab['msprt_mean_n_at_decision']:.0f} |"
-        )
+        for scenario in ("large_lift", "small_lift"):
+            sc = block[scenario]
+            aa, ab = sc["aa"], sc["ab"]
+            lines.append(
+                f"| {name} | {sc['control']} vs {sc['treatment']} | {sc['control_hit_rate']:.4f} | "
+                f"{sc['treatment_hit_rate']:.4f} | {aa['msprt_reject_rate']:.4f} | {aa['naive_peeking_reject_rate']:.4f} | "
+                f"{aa['fixed_horizon_reject_rate']:.4f} | {ab['msprt_treatment_better_rate']:.4f} | "
+                f"{ab['fixed_horizon_reject_rate']:.4f} | {ab['msprt_mean_n_at_decision']:.0f} |"
+            )
     serving = results["serving"]
     lines += [
         "",
@@ -353,6 +379,99 @@ def render_markdown(results: dict[str, Any]) -> str:
         )
     lines += ["", f"Total benchmark time: {results['total_seconds']} s.", ""]
     return "\n".join(lines)
+
+
+README_BEGIN = "<!-- RESULTS:BEGIN -->"
+README_END = "<!-- RESULTS:END -->"
+
+
+def _readme_counterfactual(results: dict[str, Any]) -> list[str]:
+    lines = [
+        "### Counterfactual estimates of the two-stage top-10 policy",
+        "",
+        "| dataset | true value | IPS (abs error) | SNIPS (abs error) | DR (abs error) | IPS effective sample size |",
+        "|---|---|---|---|---|---|",
+    ]
+    for name, block in results["counterfactual"].items():
+        row = block["policies"]["two_stage"]
+        lines.append(
+            f"| {name} | {row['true_value']:.4f} | {row['ips']['value']:.4f} ({row['ips']['abs_error']:.4f}) | "
+            f"{row['snips']['value']:.4f} ({row['snips']['abs_error']:.4f}) | "
+            f"{row['dr']['value']:.4f} ({row['dr']['abs_error']:.4f}) | "
+            f"{row['ips']['effective_sample_size']:.0f} of {block['n_rounds']} |"
+        )
+    return lines
+
+
+def _readme_ab(results: dict[str, Any]) -> list[str]:
+    lines = [
+        "### A/B simulator, alpha 0.05, 400 replications of up to 20000 arrivals",
+        "",
+        "| dataset | control vs treatment | true lift | A/A mSPRT FPR | A/A naive peeking FPR | "
+        "A/A fixed-horizon FPR | A/B mSPRT power | mean arrivals at decision |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for name, block in results["ab_simulator"].items():
+        for scenario in ("large_lift", "small_lift"):
+            sc = block[scenario]
+            aa, ab = sc["aa"], sc["ab"]
+            lines.append(
+                f"| {name} | {sc['control']} vs {sc['treatment']} | {ab['true_lift']:+.4f} | "
+                f"{aa['msprt_reject_rate']:.4f} | {aa['naive_peeking_reject_rate']:.4f} | "
+                f"{aa['fixed_horizon_reject_rate']:.4f} | {ab['msprt_treatment_better_rate']:.4f} | "
+                f"{ab['msprt_mean_n_at_decision']:.0f} |"
+            )
+    return lines
+
+
+def _readme_serving(results: dict[str, Any]) -> list[str]:
+    serving = results["serving"]
+    lines = [
+        f"### Serving latency ({serving['dataset']}, {serving['n_requests_per_model']} sequential HTTP requests "
+        "per model, k = 10, explanations on)",
+        "",
+        "| model | p50 ms | p95 ms | p99 ms | req/s at concurrency 8 |",
+        "|---|---|---|---|---|",
+    ]
+    for name, row in serving["models"].items():
+        lines.append(
+            f"| {name} | {row['p50_ms']:.2f} | {row['p95_ms']:.2f} | {row['p99_ms']:.2f} | "
+            f"{row['requests_per_second_c8']:.0f} |"
+        )
+    return lines
+
+
+def render_readme_section(results: dict[str, Any]) -> str:
+    """The results section of the README, generated so the numbers cannot drift from ``results.json``."""
+    env = results["environment"]
+    lines = [
+        f"Seed {results['seed']}, generated {results['generated_at']}, commit `{env['git_commit']}`, "
+        f"Python {env['python']}, torch {env['torch']}, scikit-learn {env['scikit_learn']} on {env['machine']}. "
+        f"Total benchmark time {results['total_seconds']} s.",
+        "",
+    ]
+    for name, block in results["offline"].items():
+        sub = block["per_user_temporal"]
+        lines += [
+            f"### {name}: per-user temporal split, k = 10 ({sub['n_eval_users']} evaluated users)",
+            "",
+            *_offline_table(sub, 10),
+            "",
+        ]
+    lines += [*_readme_counterfactual(results), "", *_readme_ab(results), "", *_readme_serving(results)]
+    lines += [
+        "",
+        "Full tables including k = 20, the global temporal split and every estimator: "
+        "[benchmarks/results.md](benchmarks/results.md).",
+    ]
+    return "\n".join(lines)
+
+
+def update_readme(results: dict[str, Any], readme: Path) -> None:
+    """Replace the block between the README markers with the rendered results section."""
+    text = readme.read_text()
+    start, end = text.index(README_BEGIN) + len(README_BEGIN), text.index(README_END)
+    readme.write_text(text[:start] + "\n" + render_readme_section(results) + "\n" + text[end:])
 
 
 def _lookup(results: dict[str, Any], path: str) -> float:
@@ -395,11 +514,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="compare results.json against thresholds.json and exit non-zero on failure",
     )
+    parser.add_argument(
+        "--update-readme", action="store_true", help="copy the measured tables into README.md"
+    )
     args = parser.parse_args(argv)
     settings = Settings.from_env()
     configure_logging("WARNING")
     if args.check:
         return 0 if check_thresholds(args.output) else 1
+    if args.update_readme:
+        update_readme(json.loads((args.output / RESULTS_FILE).read_text()), PROJECT_ROOT / "README.md")
+        print("README results section updated")
+        return 0
     run_benchmark(settings, args.seed, args.output)
     return 0
 

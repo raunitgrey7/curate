@@ -50,24 +50,30 @@ class MixtureSPRT:
         if not 0 < self.alpha < 1 or self.tau <= 0:
             raise ValueError("alpha must be in (0, 1) and tau positive")
 
-    def likelihood_ratio(
+    def log_likelihood_ratio(
         self, n_a: np.ndarray, sum_a: np.ndarray, n_b: np.ndarray, sum_b: np.ndarray
     ) -> np.ndarray:
-        """Mixture likelihood ratio of ``H1: lift != 0`` against ``H0: lift = 0``."""
+        """Log of the mixture likelihood ratio of ``H1: lift != 0`` against ``H0: lift = 0``."""
         n_a, n_b = np.maximum(n_a, 1), np.maximum(n_b, 1)
         theta = sum_b / n_b - sum_a / n_a
         pooled = (sum_a + sum_b) / (n_a + n_b)
         variance = np.maximum(pooled * (1.0 - pooled), 1e-12) * (1.0 / n_a + 1.0 / n_b)
         tau2 = self.tau**2
-        return np.sqrt(variance / (variance + tau2)) * np.exp(
-            tau2 * theta**2 / (2.0 * variance * (variance + tau2))
+        return 0.5 * np.log(variance / (variance + tau2)) + tau2 * theta**2 / (
+            2.0 * variance * (variance + tau2)
         )
+
+    def likelihood_ratio(
+        self, n_a: np.ndarray, sum_a: np.ndarray, n_b: np.ndarray, sum_b: np.ndarray
+    ) -> np.ndarray:
+        """Mixture likelihood ratio; may overflow to ``inf`` for huge evidence, which is why p-values use the log."""
+        return np.exp(self.log_likelihood_ratio(n_a, sum_a, n_b, sum_b))
 
     def always_valid_p_values(
         self, n_a: np.ndarray, sum_a: np.ndarray, n_b: np.ndarray, sum_b: np.ndarray
     ) -> np.ndarray:
-        """Running minimum of ``1 / likelihood ratio`` along the last axis, capped at one."""
-        raw = np.minimum(1.0, 1.0 / self.likelihood_ratio(n_a, sum_a, n_b, sum_b))
+        """Running minimum of ``min(1, 1 / likelihood ratio)`` along the last axis, computed in log space."""
+        raw = np.exp(np.minimum(0.0, -self.log_likelihood_ratio(n_a, sum_a, n_b, sum_b)))
         return np.minimum.accumulate(raw, axis=-1)
 
 

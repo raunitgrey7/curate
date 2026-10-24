@@ -11,6 +11,10 @@ deploying it:
 * DM (direct method): plug in a reward model ``q(x, a)`` and average it under the target policy.
 * DR (doubly robust): DM plus an IPS correction on the residuals ``r_i - q(x_i, a_i)`` (Dudik et al. 2011).
 
+Contexts are user indices and repeat heavily in a log, so every estimator asks the policy and the reward
+model for the distinct contexts only and indexes rows back; a 50,000 round log over 943 users costs one
+943 by n_items matrix per policy instead of fifty.
+
 Optional weight clipping bounds the variance at the price of bias. Every estimate reports a normal-theory
 95 percent interval and the effective sample size ``(sum w)^2 / sum w^2`` so a reader can see when a
 policy is too far from the logs to be evaluated from them.
@@ -31,6 +35,14 @@ class Policy(Protocol):
 
     def action_probabilities(self, contexts: np.ndarray) -> np.ndarray:
         """Row-stochastic ``(len(contexts), n_actions)`` matrix."""
+        ...
+
+
+class RewardModel(Protocol):
+    """Predicts expected reward for every action of the given contexts."""
+
+    def predict_matrix(self, contexts: np.ndarray) -> np.ndarray:
+        """``(len(contexts), n_actions)`` expected rewards."""
         ...
 
 
@@ -60,6 +72,10 @@ class BanditFeedback:
 
     def __len__(self) -> int:
         return len(self.contexts)
+
+    def distinct_contexts(self) -> tuple[np.ndarray, np.ndarray]:
+        """Unique contexts and the inverse index mapping every row to its unique context."""
+        return np.unique(self.contexts, return_inverse=True)
 
 
 @dataclass(frozen=True)
@@ -95,15 +111,9 @@ class Estimate:
         }
 
 
-def importance_weights(feedback: BanditFeedback, target: Policy, clip: float | None = None) -> np.ndarray:
-    """``pi(a_i | x_i) / pi_0(a_i | x_i)`` for every logged row, optionally clipped from above."""
-    probs = target.action_probabilities(feedback.contexts)
-    weights = probs[np.arange(len(feedback)), feedback.actions] / feedback.propensities
-    if clip is not None:
-        if clip <= 0:
-            raise ValueError("clip must be positive")
-        weights = np.minimum(weights, clip)
-    return weights
+def _std_error(terms: np.ndarray) -> float:
+    n = len(terms)
+    return float(terms.std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0
 
 
 def _ess(weights: np.ndarray) -> float:
@@ -111,14 +121,29 @@ def _ess(weights: np.ndarray) -> float:
     return total * total / float((weights**2).sum()) if total > 0 else 0.0
 
 
+def _logged_action_probabilities(
+    feedback: BanditFeedback, target: Policy
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Target probabilities of the logged actions plus the unique-context matrix and inverse index."""
+    unique, inverse = feedback.distinct_contexts()
+    probs = target.action_probabilities(unique)
+    return probs[inverse, feedback.actions], probs, inverse
+
+
+def importance_weights(feedback: BanditFeedback, target: Policy, clip: float | None = None) -> np.ndarray:
+    """``pi(a_i | x_i) / pi_0(a_i | x_i)`` for every logged row, optionally clipped from above."""
+    if clip is not None and clip <= 0:
+        raise ValueError("clip must be positive")
+    logged, _, _ = _logged_action_probabilities(feedback, target)
+    weights = logged / feedback.propensities
+    return np.minimum(weights, clip) if clip is not None else weights
+
+
 def ips(feedback: BanditFeedback, target: Policy, clip: float | None = None) -> Estimate:
     """Inverse propensity scoring estimate of the target policy's expected reward."""
     weights = importance_weights(feedback, target, clip)
     terms = weights * feedback.rewards
-    n = len(feedback)
-    return Estimate(
-        "ips", float(terms.mean()), float(terms.std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0, _ess(weights), n
-    )
+    return Estimate("ips", float(terms.mean()), _std_error(terms), _ess(weights), len(feedback))
 
 
 def snips(feedback: BanditFeedback, target: Policy, clip: float | None = None) -> Estimate:
@@ -130,61 +155,53 @@ def snips(feedback: BanditFeedback, target: Policy, clip: float | None = None) -
         return Estimate("snips", 0.0, 0.0, 0.0, n)
     value = float((weights * feedback.rewards).sum() / total)
     influence = weights * (feedback.rewards - value) / (total / n)
-    std_error = float(influence.std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0
-    return Estimate("snips", value, std_error, _ess(weights), n)
-
-
-class RewardModel(Protocol):
-    """Predicts expected reward for every action of the given contexts."""
-
-    def predict_matrix(self, contexts: np.ndarray) -> np.ndarray:
-        """``(len(contexts), n_actions)`` expected rewards."""
-        ...
+    return Estimate("snips", value, _std_error(influence), _ess(weights), n)
 
 
 def direct_method(feedback: BanditFeedback, target: Policy, reward_model: RewardModel) -> Estimate:
     """Average the reward model under the target policy; no importance weights, so no variance blow-up."""
-    probs = target.action_probabilities(feedback.contexts)
-    predicted = reward_model.predict_matrix(feedback.contexts)
-    per_row = (probs * predicted).sum(axis=1)
-    n = len(feedback)
-    return Estimate(
-        "dm", float(per_row.mean()), float(per_row.std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0, float(n), n
-    )
+    unique, inverse = feedback.distinct_contexts()
+    per_context = (target.action_probabilities(unique) * reward_model.predict_matrix(unique)).sum(axis=1)
+    per_row = per_context[inverse]
+    return Estimate("dm", float(per_row.mean()), _std_error(per_row), float(len(feedback)), len(feedback))
 
 
 def doubly_robust(
     feedback: BanditFeedback, target: Policy, reward_model: RewardModel, clip: float | None = None
 ) -> Estimate:
     """Direct method corrected by importance-weighted residuals of the logged actions."""
-    probs = target.action_probabilities(feedback.contexts)
-    predicted = reward_model.predict_matrix(feedback.contexts)
-    rows = np.arange(len(feedback))
-    weights = probs[rows, feedback.actions] / feedback.propensities
+    logged, probs, inverse = _logged_action_probabilities(feedback, target)
+    unique = np.unique(feedback.contexts)
+    predicted = reward_model.predict_matrix(unique)
+    weights = logged / feedback.propensities
     if clip is not None:
         weights = np.minimum(weights, clip)
-    baseline = (probs * predicted).sum(axis=1)
-    terms = baseline + weights * (feedback.rewards - predicted[rows, feedback.actions])
-    n = len(feedback)
-    return Estimate(
-        "dr", float(terms.mean()), float(terms.std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0, _ess(weights), n
-    )
+    baseline = (probs * predicted).sum(axis=1)[inverse]
+    residual = feedback.rewards - predicted[inverse, feedback.actions]
+    terms = baseline + weights * residual
+    return Estimate("dr", float(terms.mean()), _std_error(terms), _ess(weights), len(feedback))
 
 
 def true_policy_value(target: Policy, expected_reward: np.ndarray, contexts: np.ndarray) -> float:
     """Exact value when the expected reward of every (context, action) is known, as in simulation."""
-    probs = target.action_probabilities(contexts)
-    return float((probs * expected_reward[contexts]).sum(axis=1).mean())
+    unique, inverse = np.unique(contexts, return_inverse=True)
+    per_context = (target.action_probabilities(unique) * expected_reward[unique]).sum(axis=1)
+    return float(per_context[inverse].mean())
 
 
 def simulate_feedback(
     rng: np.random.Generator, logging_policy: Policy, expected_reward: np.ndarray, contexts: np.ndarray
 ) -> BanditFeedback:
     """Roll out the logging policy on the given contexts with Bernoulli rewards from ``expected_reward``."""
-    probs = logging_policy.action_probabilities(contexts)
+    unique, inverse = np.unique(contexts, return_inverse=True)
+    probs = logging_policy.action_probabilities(unique)
     cumulative = np.cumsum(probs, axis=1)
-    draws = rng.random(len(contexts))[:, None]
-    actions = np.minimum((draws > cumulative).sum(axis=1), probs.shape[1] - 1)
-    rows = np.arange(len(contexts))
+    cumulative[:, -1] = 1.0
+    draws = rng.random(len(contexts))
+    actions = np.empty(len(contexts), dtype=np.int64)
+    for row in range(len(unique)):
+        mask = inverse == row
+        actions[mask] = np.searchsorted(cumulative[row], draws[mask], side="right")
+    actions = np.minimum(actions, probs.shape[1] - 1)
     rewards = (rng.random(len(contexts)) < expected_reward[contexts, actions]).astype(np.float64)
-    return BanditFeedback(contexts, actions, probs[rows, actions], rewards, probs.shape[1])
+    return BanditFeedback(contexts, actions, probs[inverse, actions], rewards, probs.shape[1])

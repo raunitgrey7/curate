@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from curate.bench import check_thresholds, render_markdown
+from curate.bench import check_thresholds, render_markdown, render_readme_section, update_readme
 from curate.cli import build_parser, main
 from curate.config import Settings
 
@@ -57,6 +57,7 @@ def _fake_results():
     est = {"value": 0.1, "abs_error": 0.01, "effective_sample_size": 100.0}
     policy = {"true_value": 0.1, "ips": est, "snips": est, "dm": est, "dr": est}
     ab = {
+        "true_lift": 0.1,
         "msprt_reject_rate": 0.02,
         "naive_peeking_reject_rate": 0.4,
         "fixed_horizon_reject_rate": 0.05,
@@ -66,13 +67,36 @@ def _fake_results():
     return {
         "seed": 1,
         "generated_at": "now",
-        "environment": {"git_commit": "abc"},
+        "environment": {
+            "git_commit": "abc",
+            "python": "3.13",
+            "torch": "2",
+            "scikit_learn": "1",
+            "machine": "arm64",
+        },
         "offline": {"retail_synthetic": {"per_user_temporal": sub, "global_temporal": sub}},
         "counterfactual": {
             "retail_synthetic": {"n_rounds": 10, "reward_model": "x", "policies": {"two_stage": policy}}
         },
         "ab_simulator": {
-            "retail_synthetic": {"control_hit_rate": 0.1, "treatment_hit_rate": 0.2, "aa": ab, "ab": ab}
+            "retail_synthetic": {
+                "large_lift": {
+                    "control": "a",
+                    "treatment": "b",
+                    "control_hit_rate": 0.1,
+                    "treatment_hit_rate": 0.2,
+                    "aa": ab,
+                    "ab": ab,
+                },
+                "small_lift": {
+                    "control": "b",
+                    "treatment": "c",
+                    "control_hit_rate": 0.2,
+                    "treatment_hit_rate": 0.21,
+                    "aa": ab,
+                    "ab": ab,
+                },
+            }
         },
         "serving": {
             "dataset": "retail_synthetic",
@@ -104,7 +128,7 @@ def test_check_thresholds_pass_fail_and_optional(tmp_path: Path, capsys):
     thresholds = {
         "checks": [
             {"path": "offline.retail_synthetic.per_user_temporal.models.two_stage.recall@10", "min": 0.1},
-            {"path": "ab_simulator.retail_synthetic.aa.msprt_reject_rate", "max": 0.08},
+            {"path": "ab_simulator.retail_synthetic.large_lift.aa.msprt_reject_rate", "max": 0.08},
             {
                 "path": "offline.movielens_100k.per_user_temporal.models.two_stage.recall@10",
                 "min": 0.1,
@@ -132,3 +156,18 @@ def test_repository_thresholds_file_is_well_formed():
     for check in checks:
         assert "path" in check
         assert "min" in check or "max" in check
+
+
+def test_update_readme_replaces_marker_block(tmp_path: Path):
+    readme = tmp_path / "README.md"
+    readme.write_text("intro\n<!-- RESULTS:BEGIN -->\nold\n<!-- RESULTS:END -->\noutro\n")
+    results = _fake_results()
+    update_readme(results, readme)
+    text = readme.read_text()
+    assert "old" not in text
+    assert text.startswith("intro\n<!-- RESULTS:BEGIN -->\n")
+    assert text.endswith("<!-- RESULTS:END -->\noutro\n")
+    assert "| two_stage | 0.2000 |" in text
+    assert "Seed 1" in render_readme_section(results)
+    update_readme(results, readme)
+    assert readme.read_text() == text

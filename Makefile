@@ -25,8 +25,9 @@ format: ## Apply ruff formatting and safe fixes
 test: ## Run the test suite
 	$(UV) run pytest -q
 
-bench: ## Train, evaluate and write benchmarks/results.json and benchmarks/results.md
+bench: ## Train, evaluate, write benchmarks/results.json and results.md, then copy the tables into README.md
 	$(PY) -m curate.bench --seed $(SEED)
+	$(PY) -m curate.bench --update-readme
 
 check: ## Compare benchmarks/results.json against benchmarks/thresholds.json (CI quality gate)
 	$(PY) -m curate.bench --check

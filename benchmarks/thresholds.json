@@ -1,15 +1,27 @@
 {
-  "comment": "Provisional CI quality gate; values are finalised from benchmarks/results.json after the first full run.",
+  "comment": "CI quality gate for python -m curate.bench --check. Bounds sit well below the values measured on 2026-10-25 (seed 42, Apple M-series CPU) so platform float differences do not flap the gate; MovieLens checks are optional because the download can be unavailable in a sandbox.",
   "checks": [
-    {"path": "offline.movielens_100k.per_user_temporal.models.two_stage.recall@10", "min": 0.10, "optional": true},
-    {"path": "offline.movielens_100k.per_user_temporal.models.itemknn.recall@10", "min": 0.09, "optional": true},
-    {"path": "offline.movielens_100k.per_user_temporal.models.popularity.recall@10", "min": 0.04, "optional": true},
-    {"path": "offline.retail_synthetic.per_user_temporal.models.two_stage.recall@10", "min": 0.20},
-    {"path": "offline.retail_synthetic.per_user_temporal.models.itemknn.recall@10", "min": 0.20},
-    {"path": "offline.retail_synthetic.per_user_temporal.models.popularity.recall@10", "min": 0.05},
-    {"path": "counterfactual.retail_synthetic.policies.two_stage.snips.abs_error", "max": 0.01},
-    {"path": "ab_simulator.retail_synthetic.aa.msprt_reject_rate", "max": 0.08},
-    {"path": "ab_simulator.retail_synthetic.ab.msprt_treatment_better_rate", "min": 0.5},
-    {"path": "serving.models.two_stage.p95_ms", "max": 100.0}
+    {"path": "offline.movielens_100k.per_user_temporal.models.two_stage.recall@10", "min": 0.12, "optional": true},
+    {"path": "offline.movielens_100k.per_user_temporal.models.two_stage.ndcg@10", "min": 0.19, "optional": true},
+    {"path": "offline.movielens_100k.per_user_temporal.models.itemknn.recall@10", "min": 0.10, "optional": true},
+    {"path": "offline.movielens_100k.per_user_temporal.models.two_tower.recall@10", "min": 0.10, "optional": true},
+    {"path": "offline.movielens_100k.per_user_temporal.models.bpr.recall@10", "min": 0.09, "optional": true},
+    {"path": "offline.movielens_100k.per_user_temporal.models.popularity.recall@10", "min": 0.05, "optional": true},
+    {"path": "offline.movielens_100k.per_user_temporal.models.two_stage.coverage@10", "min": 0.20, "optional": true},
+    {"path": "offline.retail_synthetic.per_user_temporal.models.two_stage.recall@10", "min": 0.30},
+    {"path": "offline.retail_synthetic.per_user_temporal.models.itemknn.recall@10", "min": 0.28},
+    {"path": "offline.retail_synthetic.per_user_temporal.models.two_tower.recall@10", "min": 0.24},
+    {"path": "offline.retail_synthetic.per_user_temporal.models.bpr.recall@10", "min": 0.24},
+    {"path": "offline.retail_synthetic.per_user_temporal.models.popularity.recall@10", "min": 0.06},
+    {"path": "counterfactual.retail_synthetic.policies.two_stage.snips.abs_error", "max": 0.02},
+    {"path": "counterfactual.retail_synthetic.policies.two_stage.dr.abs_error", "max": 0.02},
+    {"path": "counterfactual.movielens_100k.policies.two_stage.snips.abs_error", "max": 0.02, "optional": true},
+    {"path": "ab_simulator.retail_synthetic.large_lift.aa.msprt_reject_rate", "max": 0.08},
+    {"path": "ab_simulator.retail_synthetic.small_lift.aa.msprt_reject_rate", "max": 0.08},
+    {"path": "ab_simulator.retail_synthetic.large_lift.aa.naive_peeking_reject_rate", "min": 0.20},
+    {"path": "ab_simulator.retail_synthetic.large_lift.ab.msprt_treatment_better_rate", "min": 0.90},
+    {"path": "ab_simulator.movielens_100k.large_lift.aa.msprt_reject_rate", "max": 0.08, "optional": true},
+    {"path": "serving.models.two_stage.p95_ms", "max": 50.0},
+    {"path": "serving.models.itemknn.p95_ms", "max": 25.0}
   ]
 }

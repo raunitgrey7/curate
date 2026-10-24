@@ -7,6 +7,7 @@ Users are sampled with a fixed seed so the run is reproducible.
 
 from __future__ import annotations
 
+import logging
 import socket
 import threading
 import time
@@ -124,6 +125,7 @@ def measure_latency(
     app: FastAPI, user_ids: np.ndarray, models: list[str], n_requests: int = 200, seed: int = 42
 ) -> list[LatencySummary]:
     """Start the app, measure every model with the same sampled users, stop the app."""
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     rng = np.random.default_rng(seed)
     sample = rng.choice(user_ids, size=n_requests, replace=True)
     api_key = getattr(app.state.settings, "api_key", None)

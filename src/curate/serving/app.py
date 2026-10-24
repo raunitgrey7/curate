@@ -81,13 +81,16 @@ def create_app(settings: Settings | None = None, state: ServingState | None = No
     app = FastAPI(title="curate", version=__version__, lifespan=lifespan, responses=ERRORS)
     app.state.metrics = metrics
     app.state.settings = settings
-    _register_routes(app)
+    _register_ops_routes(app)
+    _register_api_routes(app)
     app.add_middleware(ApiKeyMiddleware, api_key=settings.api_key)
     app.add_middleware(RequestContextMiddleware, metrics=metrics)
     return app
 
 
-def _register_routes(app: FastAPI) -> None:
+def _register_ops_routes(app: FastAPI) -> None:
+    """Error handlers, health, metrics and the static index page."""
+
     @app.exception_handler(RequestValidationError)
     async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         detail = "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors())
@@ -113,6 +116,10 @@ def _register_routes(app: FastAPI) -> None:
         if page.exists():
             return FileResponse(page)
         return JSONResponse({"service": "curate", "version": __version__, "docs": "/docs"})
+
+
+def _register_api_routes(app: FastAPI) -> None:
+    """Versioned recommendation and catalogue routes."""
 
     @app.get("/v1/models", response_model=ModelsResponse, tags=["recommendations"])
     async def models(request: Request) -> ModelsResponse:
