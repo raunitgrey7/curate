@@ -148,7 +148,7 @@ Run from a fresh login shell with `zsh -lc` on 2026-10-25, in this order (the be
 consistency tests see the freshly generated tables):
 
 ```
-cd ~/forge/curate && make bench && make lint && make test && make check
+make bench && make lint && make test && make check
 ```
 
 Outcome: `make bench` and `make lint` passed on the first pass; `make test` failed one test
@@ -310,8 +310,8 @@ builder now copies the `uv` binary into `python:3.13-slim-bookworm`), and the fi
   reported for transparency, not as the headline.
 * **Latency was measured over loopback with one uvicorn worker** on a laptop; it includes HTTP, middleware,
   explanations and JSON serialisation but not network distance or multi-worker contention.
-* **CI has not run** because the repository has not been pushed (the charter forbids pushing). The workflow was
-  parsed and every step was executed locally in the same order.
+* **The published numbers come from macOS.** CI on GitHub Actions runs lint, the tests, the benchmark and its
+  quality gate on Linux on every push, but the tables in this file were measured on the laptop named above.
 * **The MovieLens download does not verify inside Debian-based images.** `files.grouplens.org` chains to the
   "emSign Root TLS CA - G3" root (eMudhra), which the `python:3.13-slim-bookworm` CA bundle does not include (PyPI
   verifies fine from the same container, so this is not a proxy issue; macOS trusts the root, so `make setup` works

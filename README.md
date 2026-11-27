@@ -1,5 +1,8 @@
 # curate
 
+[![ci](https://github.com/raunitgrey7/curate/actions/workflows/ci.yml/badge.svg)](https://github.com/raunitgrey7/curate/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A recommender platform that treats evaluation as the product: five recommenders behind one interface, a
 sqlite feature store, time-based offline evaluation, counterfactual (IPS/SNIPS/DM/DR) evaluation of logged
 policies against exact ground truth, an A/B simulator with always-valid sequential testing, and a FastAPI
